@@ -14,6 +14,22 @@ def _ssl_context(cafile: str | None = None) -> ssl.SSLContext:
     return ssl.create_default_context(cafile=cafile or os.environ["AWS_CA_BUNDLE"])
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Hand 3xx responses back as-is: following a Location header could leave the local emulator."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _opener(cafile: str | None) -> urllib.request.OpenerDirector:
+    # Empty ProxyHandler: ignore HTTP(S)_PROXY so requests always go straight to the local emulator.
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=_ssl_context(cafile)),
+        _NoRedirect(),
+    )
+
+
 def http_request(
     url: str,
     method: str = "GET",
@@ -28,7 +44,7 @@ def http_request(
     data = json.dumps(body).encode() if isinstance(body, dict) else body
     req = urllib.request.Request(url, data=data, method=method, headers=dict(headers or {}))
     try:
-        with urllib.request.urlopen(req, context=_ssl_context(cafile), timeout=10) as resp:
+        with _opener(cafile).open(req, timeout=10) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as err:
         return err.code, err.read()
